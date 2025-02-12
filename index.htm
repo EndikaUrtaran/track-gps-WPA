@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GPS Tracker Offline</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#ffffff">
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <style>
+        #map { height: 100vh; }
+        .controls {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="controls">
+        <button onclick="startTracking()">Iniciar</button>
+        <button onclick="stopTracking()">Detener</button>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script>
+        let map;
+        let track = [];
+        let polyline;
+        let watchId;
+        let wakeLock = null;
+        
+        // Inicializar mapa
+        function initMap() {
+            map = L.map('map').setView([0, 0], 13);
+            L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+                maxZoom: 17,
+                attribution: '© OpenTopoMap'
+            }).addTo(map);
+            
+            // Cargar track guardado
+            const savedTrack = localStorage.getItem('gpsTrack');
+            if(savedTrack) {
+                track = JSON.parse(savedTrack);
+                updatePolyline();
+            }
+        }
+
+        // Solicitar bloqueo de activación
+        async function requestWakeLock() {
+            try {
+                wakeLock = await navigator.wakeLock.request('screen');
+            } catch(err) {
+                console.error('Error al solicitar wake lock:', err);
+            }
+        }
+
+        // Iniciar seguimiento
+        async function startTracking() {
+            if (!navigator.geolocation) {
+                alert('GPS no soportado');
+                return;
+            }
+            
+            await requestWakeLock();
+            
+            watchId = navigator.geolocation.watchPosition(
+                position => {
+                    const pos = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude,
+                        time: new Date().toISOString()
+                    };
+                    
+                    track.push(pos);
+                    localStorage.setItem('gpsTrack', JSON.stringify(track));
+                    
+                    if(!polyline) {
+                        polyline = L.polyline([pos], {color: 'red'}).addTo(map);
+                    } else {
+                        polyline.addLatLng(pos);
+                    }
+                    map.panTo([pos.lat, pos.lng]);
+                },
+                error => console.error('Error GPS:', error),
+                {
+                    enableHighAccuracy: true,
+                    maximumAge: 0,
+                    timeout: 5000
+                }
+            );
+        }
+
+        // Detener seguimiento
+        function stopTracking() {
+            if(watchId) navigator.geolocation.clearWatch(watchId);
+            if(wakeLock) wakeLock.release();
+            wakeLock = null;
+        }
+
+        // Actualizar polilínea
+        function updatePolyline() {
+            if(polyline) map.removeLayer(polyline);
+            if(track.length > 0) {
+                polyline = L.polyline(track, {color: 'red'}).addTo(map);
+                map.fitBounds(polyline.getBounds());
+            }
+        }
+
+        // Service Worker
+        if('serviceWorker' in navigator) {
+            window.addEventListener('load', async () => {
+                try {
+                    await navigator.serviceWorker.register('sw.js');
+                } catch (error) {
+                    console.log('SW registration failed:', error);
+                }
+            });
+        }
+
+        initMap();
+    </script>
+</body>
+</html>
